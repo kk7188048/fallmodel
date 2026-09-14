@@ -1,0 +1,42 @@
+# All hyperparameters and paths live here — nothing hardcoded in code.
+
+paths:
+  raw_dir: data/raw
+  processed_dir: data/processed
+  inventory_file: data/inventory.json
+  splits_file: data/splits.json
+  checkpoints_dir: checkpoints
+  # mlflow>=3.x refuses the plain-directory filestore backend by default
+  # (it's in maintenance mode); sqlite is the supported local backend.
+  mlflow_uri: sqlite:///mlruns.db
+
+pose:
+  model_complexity: 1
+  min_detection_confidence: 0.5
+  min_tracking_confidence: 0.5
+
+windowing:
+  window_size: 30
+  # 5, not 15: verified on the full Le2i dataset to meaningfully improve
+  # PR-AUC (0.585 -> 0.640) and best-threshold F1 (0.58 -> 0.65) by giving
+  # the model more (denser, overlapping) examples of each fall event - see
+  # EXPERIMENTS.md for the full comparison.
+  stride: 5
+  fps: 30
+
+model:
+  input_dim: null # set from feature vector length at runtime
+  hidden_dim: 128
+  num_layers: 2
+  bidirectional: true
+  attention_dim: 64
+  dropout: 0.3
+  num_classes: 2
+
+train:
+  batch_size: 32
+  lr: 0.0003
+  weight_decay: 0.0001
+  max_epochs: 100
+  early_stopping_patience: 10
+  seed: 42

@@ -1,0 +1,16 @@
+data/
+checkpoints/
+mlruns/
+mlruns.db
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Le2i experiment baseline artifacts (large, binary, not needed - see EXPERIMENTS.md)
+checkpoints_stride15_baseline/
+mlruns_stride15_baseline*
+data_stride15_baseline/
+
+# macOS
+.DS_Store

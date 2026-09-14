@@ -1,0 +1,13 @@
+# mediapipe>=1.0 dropped the legacy `solutions.pose` API in favor of the
+# Tasks API, whose PoseLandmarker crashes on macOS (Metal GraphService
+# unavailable) as of this writing; pin to the last 0.10.x line instead.
+kaggle
+mediapipe==0.10.21
+opencv-python
+numpy<2
+torch
+scikit-learn
+pyyaml
+mlflow
+pytest
+tqdm
