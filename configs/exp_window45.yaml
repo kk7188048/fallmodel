@@ -1,0 +1,42 @@
+# Experiment: window_size=45 (was 30), testing the M4 hypothesis that
+# false negatives are dominated by "truncated context" - 80% of missed
+# falls had their most-attended frame right at the window edge (see
+# EXPERIMENTS.md / error analysis discussion), suggesting the model isn't
+# seeing enough of the fall event within one window. Everything else
+# matches configs/default.yaml (stride=5, same model/train hyperparams).
+# Separate paths so this doesn't clobber the current default artifacts.
+
+paths:
+  raw_dir: data/raw
+  processed_dir: data/processed_window45
+  inventory_file: data/inventory.json
+  splits_file: data/splits.json
+  checkpoints_dir: checkpoints_window45
+  mlflow_uri: sqlite:///mlruns_window45.db
+
+pose:
+  model_complexity: 1
+  min_detection_confidence: 0.5
+  min_tracking_confidence: 0.5
+
+windowing:
+  window_size: 45
+  stride: 5
+  fps: 30
+
+model:
+  input_dim: null
+  hidden_dim: 128
+  num_layers: 2
+  bidirectional: true
+  attention_dim: 64
+  dropout: 0.3
+  num_classes: 2
+
+train:
+  batch_size: 32
+  lr: 0.0003
+  weight_decay: 0.0001
+  max_epochs: 100
+  early_stopping_patience: 10
+  seed: 42

@@ -1,0 +1,21 @@
+# NOTE: mediapipe pinned to 0.10.18 here (not 0.10.21 like requirements.txt)
+# because 0.10.21 has no published wheel for linux/aarch64 (this image's
+# build platform on Apple Silicon) - confirmed by a real failed build, not
+# guessed. 0.10.18 is the newest 0.10.x version with a wheel for this
+# platform, and the legacy solutions.pose API is unchanged across 0.10.x
+# patch releases.
+#
+# Minimal, pinned dependency set for serving (api/) only - deliberately
+# excludes training/dev-only packages (mlflow, kaggle, pandas, matplotlib,
+# scikit-learn, pytest) to keep the Docker image smaller and to avoid the
+# mediapipe/protobuf version conflicts those pull in (see requirements.txt
+# for the full explanation - mediapipe==0.10.18 needs protobuf<5, some
+# training-only tooling wants newer). Exact versions pinned throughout:
+# "works on my machine" isn't reproducibility.
+mediapipe==0.10.18
+numpy==1.26.4
+fastapi==0.141.1
+uvicorn==0.52.4
+python-multipart==0.0.32
+pydantic==2.13.5
+psycopg[binary]

@@ -11,3 +11,10 @@ pyyaml
 mlflow
 pytest
 tqdm
+psycopg[binary]
+fastapi
+uvicorn
+httpx
+python-multipart
+pandas
+matplotlib

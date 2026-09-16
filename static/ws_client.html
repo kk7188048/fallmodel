@@ -1,0 +1,136 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Fall Detection - Live Demo</title>
+<style>
+  body { font-family: system-ui, sans-serif; background: #111; color: #eee; margin: 0; padding: 24px; }
+  h1 { font-size: 18px; font-weight: normal; color: #999; }
+  #wrap { position: relative; width: 640px; max-width: 100%; }
+  video { width: 100%; display: block; border-radius: 4px; background: #000; }
+  #overlay {
+    position: absolute; top: 12px; left: 12px; padding: 10px 16px;
+    font-size: 20px; font-weight: bold; border-radius: 6px;
+    background: rgba(0,0,0,0.6); transition: background 0.15s;
+  }
+  #overlay.warming { color: #999; }
+  #overlay.adl { color: #7CFC7C; }
+  #overlay.fall { color: #fff; background: rgba(200,0,0,0.85); }
+  #status { margin-top: 12px; font-size: 13px; color: #999; }
+  #note {
+    margin-top: 16px; font-size: 13px; color: #bbb; max-width: 640px;
+    border-left: 3px solid #555; padding-left: 12px;
+  }
+</style>
+</head>
+<body>
+
+<h1>Fall Detection — live demo (bare harness, not a product UI)</h1>
+
+<div id="wrap">
+  <video id="video" autoplay playsinline muted></video>
+  <div id="overlay" class="warming">connecting…</div>
+</div>
+<canvas id="canvas" style="display:none"></canvas>
+
+<div id="status">not connected</div>
+
+<div id="note">
+  <strong>Expect a lag of about window_size frames</strong> (the model is
+  bidirectional - it needs the full window before it can predict at all,
+  it cannot look at "the future" of a partial window). This is a
+  structural property of the model, not a bug.
+</div>
+
+<script>
+const video = document.getElementById("video");
+const canvas = document.getElementById("canvas");
+const overlay = document.getElementById("overlay");
+const statusEl = document.getElementById("status");
+const ctx = canvas.getContext("2d");
+
+const SEND_FPS = 15;
+const WS_URL = (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws/predict";
+
+let ws;
+
+function setOverlay(text, cls) {
+  overlay.textContent = text;
+  overlay.className = cls;
+}
+
+function connect() {
+  ws = new WebSocket(WS_URL);
+
+  ws.onopen = () => {
+    statusEl.textContent = "connected - warming up the prediction buffer...";
+    setOverlay("warming up...", "warming");
+  };
+
+  ws.onclose = () => {
+    statusEl.textContent = "disconnected - retrying in 2s...";
+    setTimeout(connect, 2000);
+  };
+
+  ws.onerror = () => {
+    statusEl.textContent = "websocket error (see console)";
+  };
+
+  ws.onmessage = (event) => {
+    const msg = JSON.parse(event.data);
+
+    if (msg.error) {
+      statusEl.textContent = "frame error: " + msg.error;
+      return;
+    }
+
+    if (!msg.buffer_full) {
+      setOverlay(`warming up (${msg.frames_collected})`, "warming");
+      statusEl.textContent = `collecting frames: ${msg.frames_collected}`;
+      return;
+    }
+
+    if (msg.prediction === null) {
+      setOverlay("no person detected", "warming");
+      statusEl.textContent = "buffer full, but no person detected in this window";
+      return;
+    }
+
+    const label = msg.prediction.toUpperCase();
+    const conf = (msg.confidence * 100).toFixed(0);
+    setOverlay(`${label} (${conf}%)`, msg.prediction);
+    statusEl.textContent = `live - last prediction: ${label} at ${conf}% confidence`;
+  };
+}
+
+async function startCamera() {
+  const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 }, audio: false });
+  video.srcObject = stream;
+  await video.play();
+  canvas.width = video.videoWidth || 640;
+  canvas.height = video.videoHeight || 480;
+}
+
+function sendFrame() {
+  if (ws && ws.readyState === WebSocket.OPEN && video.videoWidth) {
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    canvas.toBlob((blob) => {
+      if (blob) blob.arrayBuffer().then((buf) => ws.send(buf));
+    }, "image/jpeg", 0.8);
+  }
+}
+
+(async () => {
+  try {
+    await startCamera();
+  } catch (err) {
+    statusEl.textContent = "camera error: " + err.message;
+    return;
+  }
+  connect();
+  setInterval(sendFrame, 1000 / SEND_FPS);
+})();
+</script>
+
+</body>
+</html>

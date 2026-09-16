@@ -11,6 +11,13 @@ __pycache__/
 checkpoints_stride15_baseline/
 mlruns_stride15_baseline*
 data_stride15_baseline/
+checkpoints_window45/
+mlruns_window45*
+outputs/monitoring/
 
 # macOS
 .DS_Store
+
+# never commit real credentials
+.env
+.env.*

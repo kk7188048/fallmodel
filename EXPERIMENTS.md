@@ -87,3 +87,42 @@ not solved - use `scripts/threshold_sweep.py --min_recall <x>` to pick an
 operating point. Absolute fall-window count (998) is still small for deep
 learning; more source video would likely help more than further stride
 tuning.
+
+## 2026-09-15 — window_size=45 (was 30), testing the M4 "truncated context" hypothesis
+
+**Hypothesis (from M4 error analysis):** 80% of false negatives (20/25) had their
+highest-attention frame within 2 frames of the window boundary, suggesting the model
+wasn't seeing the full fall event. Prediction: a longer window should reduce missed
+falls.
+
+**Setup:** `configs/exp_window45.yaml` - window_size=45 (was 30), stride=5 unchanged,
+same model/train hyperparameters. Re-extracted all 190 videos (13,590 windows, 1,266
+fall / 9.3% - up from 7.0% at window=30, a nice side effect of longer windows
+naturally overlapping fall intervals more often).
+
+**Result:** early stopped epoch 13, best val_loss 0.2761 (worse than window=30's
+0.2253 - some evidence of a harder optimization problem with longer sequences).
+
+| | window=30 (current default) | window=45 |
+|---|---|---|
+| PR-AUC | 0.640 | 0.656 |
+| Best F1 | 0.653 (t=0.75) | 0.668 (t=0.80) |
+| Precision/recall at best F1 | 0.59 / 0.73 | 0.69 / 0.65 |
+| Precision at recall>=0.9 | 0.36 (t=0.45) | 0.40 (t=0.45) |
+| Recall at threshold=0.5 | 0.879 | 0.863 (slightly worse) |
+
+**Verdict: modest, mixed improvement - NOT the clean fix the edge-attention
+statistic predicted.** PR-AUC and best-F1 both improved a little; precision at a
+matched high-recall (0.9) operating point improved meaningfully (0.36->0.40). But at
+the default threshold, recall got slightly *worse*, and window=45's own best-F1
+threshold trades recall down to 0.65 (worse than window=30's 0.73 at its best-F1
+point) in exchange for higher precision. This is the opposite tradeoff direction
+from what the safety framing wants if you're optimizing for "don't miss falls."
+
+**Takeaway for the truncated-context theory:** probably a real contributing factor,
+not the dominant cause of false negatives - window=45 gives longer context but
+doesn't resolve the fundamental data-scarcity problem (only ~1,266 real positive
+windows even now). Worth keeping as a genuine, if modest, improvement; not worth
+overselling as "the fix."
+
+**Decision on which model to deploy (M5): pending - see chat.**

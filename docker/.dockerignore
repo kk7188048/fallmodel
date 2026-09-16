@@ -1,0 +1,16 @@
+data/
+mlruns/
+mlruns_*
+*.db
+.git/
+notebooks/
+tests/
+outputs/
+checkpoints/
+checkpoints_stride15_baseline/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.DS_Store
+fall-detection-results/

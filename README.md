@@ -146,3 +146,149 @@ python scripts/run_extraction.py
 python scripts/run_training.py
 python scripts/run_experiment_grid.py
 ```
+
+## M5 - serving (API + Docker)
+
+`api/` exposes a `/predict` endpoint that reuses `src/falldet/pipeline.py`'s
+`process_video()` completely unchanged from training - `api/inference.py`
+pulls every pose/windowing parameter straight from the deployed
+checkpoint's own saved config, so there is no separate config file that
+could drift out of sync with what the model actually trained on.
+Errors are centralized in `api/errors/` (typed exceptions + one FastAPI
+handler any endpoint can reuse) rather than scattered per-route.
+
+### Run locally
+
+```bash
+pip install -r requirements-serve.txt
+python scripts/run_api.py
+# in another terminal:
+curl -F "file=@path/to/clip.mp4" http://localhost:8000/predict
+```
+
+### Run in Docker
+
+Tested end-to-end on this machine (Apple Silicon, Docker Desktop) exactly
+as written below - not from memory:
+
+```bash
+docker build -f docker/Dockerfile -t falldet .
+docker run -d -p 8000:8000 --name falldet-test falldet
+curl http://localhost:8000/health
+curl -F "file=@path/to/clip.mp4" http://localhost:8000/predict
+```
+
+**Real things this surfaced, not just theory:**
+- `mediapipe==0.10.21` (what `requirements.txt`/local dev use) has **no
+  published wheel for `linux/aarch64`** - the actual build failed with
+  `ERROR: Could not find a version that satisfies the requirement
+  mediapipe==0.10.21`. `requirements-serve.txt` pins `mediapipe==0.10.18`
+  instead (the newest 0.10.x with a wheel for this platform); the legacy
+  `solutions.pose` API used by `pose.py` is unchanged across 0.10.x patch
+  releases, confirmed by comparing predictions below.
+- Confidence on a known test video came back **0.9704** in Docker vs.
+  **0.9700** locally - a real, tiny, and expected discrepancy from the
+  mediapipe patch-version difference (0.10.18 vs 0.10.21), not a bug. Same
+  verdict (`fall`), same window count (64).
+- Image is ~3GB - mediapipe pulls in `jax`/`jaxlib`/`scipy` as its own
+  transitive dependencies, which dominate the size; not something this
+  project's own code controls.
+- `libgl1`/`libglib2.0-0` are required at runtime (not just build time) or
+  OpenCV/MediaPipe fail with `ImportError: libGL.so.1` - both stages of
+  the Dockerfile install them for this reason.
+
+If building on `linux/amd64` instead (e.g. a typical cloud VM, not Apple
+Silicon), `mediapipe==0.10.21` likely does have a wheel there and
+`requirements-serve.txt` could be updated to match `requirements.txt`
+exactly - untested on that platform from here.
+
+### Live webcam demo (WebSocket)
+
+`api/ws.py` exposes `/ws/predict` for real-time inference; `static/ws_client.html`
+(served at `/demo`) is a bare browser harness around it - `getUserMedia()` for the
+webcam, sends JPEG frames at 15fps, shows the live prediction as an overlay.
+
+```bash
+python scripts/run_api.py
+# then open http://localhost:8000/demo in a browser and allow camera access
+```
+
+**The model is bidirectional, so it needs the full window before it can predict
+at all** - live detection has a built-in lag of `window_size` frames at whatever
+rate the client sends them (currently 45 frames @ 15fps sent =~ 3 seconds before
+the first prediction, and every prediction after that reflects events up to
+roughly one window-length ago). This is a structural property of the
+architecture, stated here rather than left for someone to discover and assume
+is a bug.
+
+**Verified for real** (not just unit tests): streamed a real fall video frame by
+frame through a live `/ws/predict` connection - confidence climbed to ~0.97
+exactly during the real fall interval (frames 211-238), matching `/predict`'s
+own aggregated result (0.9704) on the same clip almost exactly, then decayed as
+the sliding window moved past the event - the same qualitative pattern found
+during M4's error analysis and the original `run_demo.py` check, now reproduced
+live over a real websocket connection.
+
+**Recording an actual demo clip (webcam) is a "you, not Claude Code" step** -
+needs a real camera and someone acting out a fall + normal movement, which
+can't be done from here.
+
+### Monitoring backend: Postgres (or CSV fallback)
+
+`api/monitoring.py` logs every inference to Postgres if `FALLDET_DATABASE_URL`
+is set, else falls back to the CSV file used earlier in development. Postgres
+fixes the one genuine correctness gap in the CSV approach: multiple uvicorn
+workers appending to the same file with plain `open(..., "a")` is a real race
+condition, not just "less proper."
+
+```bash
+export FALLDET_DATABASE_URL="postgresql://user:pass@host/db?sslmode=require"
+python scripts/run_api.py
+# ... send some /predict requests ...
+python scripts/plot_drift.py   # reads from Postgres automatically when the env var is set
+```
+
+**Isolation note**: if pointing this at a shared/existing Postgres instance,
+the app creates and only ever touches its own schema (`falldet.inference_log`)
+- verified live against a real shared Neon database that had 15 unrelated
+tables (a Nakama game-backend schema, 43 real user rows) already in `public`:
+sent real predictions through, confirmed the new rows landed correctly in
+`falldet.inference_log`, and re-queried `public.users`/`user_device`/
+`leaderboard_record` afterward to confirm zero rows changed there.
+
+**Never commit a real `FALLDET_DATABASE_URL`** (or any credential) into this
+repo or into chat with an assistant - `.env`/`.env.*` are gitignored for this
+reason; set it as a real environment variable or secret instead.
+
+### MLOps additions: CI, alerting, upload limits, auth, model registry
+
+- **CI** (`.github/workflows/ci.yml`): runs the full pytest suite on every push/PR to `main`.
+- **Alerting** (`scripts/plot_drift.py --alert_threshold X`): exits 1 and prints a
+  warning to stderr if the latest rolling-mean confidence drops below `X` - cheap,
+  automatable (cron/CI) drift signal, explicitly NOT real alerting infrastructure
+  (no paging, no dashboards).
+- **Upload limits** (`FALLDET_MAX_UPLOAD_BYTES`, default 200MB): `/predict` reads
+  uploads in 1MB chunks and rejects (413) as soon as the limit is crossed, rather
+  than buffering an arbitrarily large file into memory first.
+- **API key auth** (`FALLDET_API_KEY`): if set, `/predict` requires a matching
+  `X-API-Key` header (401 otherwise). Unset by default (open), matching every
+  earlier assumption in this project. Doesn't cover `/ws/predict` - the browser
+  `WebSocket` API can't send custom headers at all, so that endpoint stays
+  unauthenticated (it's already documented as a demo harness, not production).
+- **Model registry** (`api/registry.py`, `scripts/register_model.py`): a Postgres
+  table (`falldet.models`) mapping a tag (e.g. `production`) to a checkpoint's
+  file path + sha256 hash + key config fields. `FALLDET_MODEL_TAG` resolves the
+  model to serve via this registry instead of a hardcoded `FALLDET_MODEL_PATH`.
+  Deliberately minimal - "one active checkpoint per tag," not a full
+  versioning/rollback/promotion system.
+
+```bash
+python scripts/register_model.py --checkpoint checkpoints_window45/best_model.pt --tag production
+python scripts/register_model.py --list
+FALLDET_MODEL_TAG=production FALLDET_DATABASE_URL=... python scripts/run_api.py
+```
+
+All five verified live: registered the real production model, confirmed
+`/health` reports the registry-resolved absolute path, confirmed a real
+prediction through that path matches every earlier run exactly
+(confidence 0.9700656533241272 on the same test video).
